@@ -51,6 +51,7 @@
 ### END INIT INFO
 
 prog=$(basename $0)
+prog="${prog#[SK][0-9][0-9]}"   # strip runlevel Snn/Knn prefix
 logger="logger -t $prog"
 
 if [ `id -u` -ne 0 ]
