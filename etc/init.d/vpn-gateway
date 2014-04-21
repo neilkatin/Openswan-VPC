@@ -15,7 +15,7 @@
 # 
 # 5. Create a VPC, a VGW, a CGW (use the Elastic IP from the last step as IP address), and a VPN using the VPC Console
 
-# 6. Stop the EC2 instance and configure the following User Data (click on Instance Actions > View/Change User Data). Get the values from the VPN Download Configuration feature on the VPC Console.
+# 6a. Stop the EC2 instance and configure the following User Data (click on Instance Actions > View/Change User Data). Get the values from the VPN Download Configuration feature on the VPC Console.
 #  CGW_OUTSIDE_IP=54.200.28.117
 #  CUSTOMER_ASN=65000
 #  AWS_ASN=17493
@@ -27,6 +27,34 @@
 #  CGW_TUNNEL2_INSIDE_IP=169.254.251.30
 #  VGW_TUNNEL2_INSIDE_IP=169.254.251.29
 #  TUNNEL2_SECRET="secret key"
+#
+# 6b. If not running in an ec2 instance, or if you want to store this data locally, make a file /etc/sysconfig/vpn-gateway (change vpc-gateway to whatever you named your /etc/init.d script).
+#
+# Define these variables in the script:
+# configure VPC gateway
+
+# # your instance public IP
+# INSTANCE_IP=nnn.nnn.nnn.nnn
+# QUAGGA_PASSWORD=some-secure-password
+
+# # bgp config -- from the configuration file
+# CGW_OUTSIDE_IP=nnn.nnn.nnn.nnn
+# CUSTOMER_ASN=65000
+# AWS_ASN=17493
+
+# #VPN 1 config -- these four fields are from the vpn configuration file for VPN 1
+# VGW_TUNNEL1_OUTSIDE_IP=72.21.209.225
+# CGW_TUNNEL1_INSIDE_IP=169.254.255.2
+# VGW_TUNNEL1_INSIDE_IP=169.254.255.1
+# TUNNEL1_SECRET="password"
+
+# #VPN 2 config -- these four fields are from the vpn configuration file for VPN 2
+# VGW_TUNNEL2_OUTSIDE_IP=72.21.209.226
+# CGW_TUNNEL2_INSIDE_IP=169.254.255.6
+# VGW_TUNNEL2_INSIDE_IP=169.254.255.5
+# TUNNEL2_SECRET="password"
+
+#
 #
 # 7. Reboot the instance and test the configuration by launching a Linux instance in your VPC and pinging that instance
 #  $ ip netns exec openswan ping <IP address in your VPC>
@@ -64,21 +92,26 @@ fi
 RETVAL=0
 
 setup_environment() {
-  curl="curl --retry 3 --silent --show-error --fail"
-  instance_userdata_url=http://169.254.169.254/2012-01-12/user-data
-  instance_metadata_url=http://169.254.169.254/latest/meta-data
+  if [ -r "/etc/sysconfig/$prog" ]; then
+    source "/etc/sysconfig/$prog"
+  else
+    local curl="curl --retry 3 --silent --show-error --fail"
+    instance_userdata_url=http://169.254.169.254/2012-01-12/user-data
+    instance_metadata_url=http://169.254.169.254/latest/meta-data
+
+    # Wait until meta-data is available.
+    perl -MIO::Socket::INET -e '
+     until(new IO::Socket::INET("169.254.169.254:80")){print"Waiting for meta-data...\n";sleep 1}
+	 ' | mylogger
+
+    local ENVIRONMENT_VARIABLES=`$curl -s $instance_userdata_url`
+    eval $ENVIRONMENT_VARIABLES
+
+    INSTANCE_IP=`$curl -s $instance_metadata_url/local-ipv4`
+  fi
+
+  : ${QUAGGA_PASSWORD:=testPassword}
   ox='ip netns exec openswan'
-
-  # Wait until meta-data is available.
-  perl -MIO::Socket::INET -e '
-   until(new IO::Socket::INET("169.254.169.254:80")){print"Waiting for meta-data...\n";sleep 1}
-       ' | $logger
-
-  ENVIRONMENT_VARIABLES=`$curl -s $instance_userdata_url`
-  eval $ENVIRONMENT_VARIABLES
-
-  INSTANCE_IP=`$curl -s $instance_metadata_url/local-ipv4`
-  QUAGGA_PASSWORD=testPassword
   GATEWAY_IP=169.254.255.1
   NAMESPACE_TUNNEL1_IP=169.254.255.2
   NAMESPACE_TUNNEL2_IP=169.254.255.3
